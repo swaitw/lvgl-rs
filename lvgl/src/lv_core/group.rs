@@ -27,7 +27,7 @@ impl Group {
 
     /// Adds an object to the group.
     pub fn add_obj(&mut self, obj: &impl NativeObject) -> LvResult<()> {
-        unsafe { lvgl_sys::lv_group_add_obj(self.raw()?.as_mut(), obj.raw()?.as_mut()) }
+        unsafe { lvgl_sys::lv_group_add_obj(self.raw()?.as_mut(), obj.raw().as_mut()) }
         Ok(())
     }
 
@@ -64,7 +64,7 @@ mod test {
     fn group_test() {
         const HOR_RES: u32 = 240;
         const VER_RES: u32 = 240;
-
+        crate::tests::initialize_test(false);
         let buffer = DrawBuffer::<{ (HOR_RES * VER_RES) as usize }>::default();
         let display = Display::register(buffer, HOR_RES, VER_RES, |_| {}).unwrap();
         let mut screen = display.get_scr_act().unwrap();

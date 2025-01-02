@@ -1,13 +1,15 @@
 use crate::functions::CoreError;
-use crate::{disp_drv_register, disp_get_default, get_str_act, RunOnce, NativeObject, LvResult};
 use crate::Screen;
+use crate::{disp_drv_register, disp_get_default, get_str_act, NativeObject};
 use crate::{Box, Color};
-use core::cell::RefCell;
 use core::convert::TryInto;
-use core::mem::MaybeUninit;
+#[cfg(feature = "nightly")]
+use core::error::Error;
+use core::fmt;
+use core::mem::{ManuallyDrop, MaybeUninit};
+use core::pin::Pin;
 use core::ptr::NonNull;
 use core::{ptr, result};
-use lvgl_sys::_lv_disp_draw_buf_t;
 
 /// Error in interacting with a `Display`.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -16,6 +18,23 @@ pub enum DisplayError {
     FailedToRegister,
     NotRegistered,
 }
+
+impl fmt::Display for DisplayError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Display {}",
+            match self {
+                DisplayError::NotAvailable => "not available",
+                DisplayError::FailedToRegister => "failed to register",
+                DisplayError::NotRegistered => "not registered",
+            }
+        )
+    }
+}
+
+#[cfg(feature = "nightly")]
+impl Error for DisplayError {}
 
 type Result<T> = result::Result<T, DisplayError>;
 
@@ -49,20 +68,18 @@ impl<'a> Display {
         disp_p.hor_res = hor_res.try_into().unwrap_or(240);
         disp_p.ver_res = ver_res.try_into().unwrap_or(240);
         Ok(disp_drv_register(&mut display_diver, None)?)
+        //display_diver.disp_drv.leak();
     }
 
     /// Returns the current active screen.
-    pub fn get_scr_act(&self) -> Result<Screen> {
+    pub fn get_scr_act(&'a self) -> Result<Screen<'a>> {
         Ok(get_str_act(Some(self))?.try_into()?)
     }
 
     /// Sets a `Screen` as currently active.
-    pub fn set_scr_act(&mut self, screen: &mut Screen) -> LvResult<()> {
-        let scr_ptr = unsafe { screen.raw()?.as_mut() };
-        unsafe {
-            lvgl_sys::lv_disp_load_scr(scr_ptr)
-        }
-        Ok(())
+    pub fn set_scr_act(&'a self, screen: &'a mut Screen) {
+        let scr_ptr = unsafe { screen.raw().as_mut() };
+        unsafe { lvgl_sys::lv_disp_load_scr(scr_ptr) }
     }
 
     /// Registers a display from raw functions and values.
@@ -71,6 +88,7 @@ impl<'a> Display {
     ///
     /// `hor_res` and `ver_res` must be nonzero, and the provided functions
     /// must not themselves cause undefined behavior.
+    #[allow(clippy::too_many_arguments)]
     pub unsafe fn register_raw<const N: usize>(
         draw_buffer: DrawBuffer<N>,
         hor_res: u32,
@@ -79,7 +97,7 @@ impl<'a> Display {
             unsafe extern "C" fn(
                 *mut lvgl_sys::lv_disp_drv_t,
                 *const lvgl_sys::lv_area_t,
-                *mut lvgl_sys::lv_color16_t,
+                *mut lvgl_sys::lv_color_t,
             ),
         >,
         rounder_cb: Option<
@@ -137,81 +155,67 @@ impl Drop for Display {
     }
 }
 
-#[derive(Copy, Clone)]
-pub(crate) struct DefaultDisplay {}
-
-impl DefaultDisplay {
-    /// Gets the active screen of the default display.
-    pub(crate) fn get_scr_act() -> Result<Screen> {
-        Ok(get_str_act(None)?.try_into()?)
-    }
+/// Gets the active screen of the default display.
+pub(crate) fn get_scr_act() -> Result<Screen<'static>> {
+    Ok(get_str_act(None)?.try_into()?)
 }
 
 /// A buffer of size `N` representing `N` pixels. `N` can be smaller than the
 /// entire number of pixels on the screen, in which case the screen will be
 /// drawn to multiple times per frame.
 pub struct DrawBuffer<const N: usize> {
-    //inner: NonNull<lvgl_sys::lv_disp_draw_buf_t>,
-    initialized: RunOnce,
-    refresh_buffer: RefCell<[MaybeUninit<lvgl_sys::lv_color_t>; N]>,
+    draw_buf: Pin<Box<lvgl_sys::lv_disp_draw_buf_t>>,
+    _refresh_buffer: Pin<Box<[MaybeUninit<lvgl_sys::lv_color_t>; N]>>,
 }
 
 impl<const N: usize> Default for DrawBuffer<N> {
     fn default() -> Self {
+        let mut buf = Box::pin([MaybeUninit::uninit(); N]);
         Self {
-            initialized: RunOnce::new(),
-            refresh_buffer: RefCell::new([MaybeUninit::uninit(); N]),
+            draw_buf: Box::pin(unsafe {
+                let mut inner: MaybeUninit<lvgl_sys::lv_disp_draw_buf_t> = MaybeUninit::uninit();
+                let raw_ptr = buf.as_mut_ptr() as *mut _;
+                lvgl_sys::lv_disp_draw_buf_init(
+                    inner.as_mut_ptr(),
+                    raw_ptr,
+                    ptr::null_mut(),
+                    N as u32,
+                );
+                inner.assume_init()
+            }),
+            _refresh_buffer: buf,
         }
     }
 }
 
 impl<const N: usize> DrawBuffer<N> {
-    fn get_ptr(&self) -> Option<Box<lvgl_sys::lv_disp_draw_buf_t>> {
-        if self.initialized.swap_and_check() {
-            // TODO: needs to be 'static somehow
-            // Cannot be in the DrawBuffer struct because the type `lv_disp_buf_t` contains a raw
-            // pointer and raw pointers are not Send and consequently cannot be in `static` variables.
-            let mut inner: MaybeUninit<lvgl_sys::lv_disp_draw_buf_t> = MaybeUninit::uninit();
-            let primary_buffer_guard = &self.refresh_buffer;
-            let draw_buf = unsafe {
-                lvgl_sys::lv_disp_draw_buf_init(
-                    inner.as_mut_ptr(),
-                    primary_buffer_guard.borrow_mut().as_mut_ptr() as *mut _,
-                    ptr::null_mut(),
-                    N as u32,
-                );
-                inner.assume_init()
-            };
-            Some(Box::new(draw_buf))
-        } else {
-            None
-        }
+    fn get_ptr(&mut self) -> &mut lvgl_sys::lv_disp_draw_buf_t {
+        &mut self.draw_buf
     }
 }
 
 #[repr(C)]
 pub(crate) struct DisplayDriver<const N: usize> {
-    pub(crate) disp_drv: lvgl_sys::lv_disp_drv_t,
+    pub(crate) disp_drv: Pin<Box<lvgl_sys::lv_disp_drv_t>>,
     _buffer: DrawBuffer<N>,
 }
 
 impl<'a, const N: usize> DisplayDriver<N> {
-    pub fn new<F>(draw_buffer: DrawBuffer<N>, display_update_callback: F) -> Result<Self>
+    pub fn new<F>(
+        mut draw_buffer: DrawBuffer<N>,
+        display_update_callback: F,
+    ) -> Result<ManuallyDrop<Self>>
     where
         F: FnMut(&DisplayRefresh<N>) + 'a,
     {
-        let mut disp_drv = unsafe {
+        let mut disp_drv = Box::pin(unsafe {
             let mut inner = MaybeUninit::uninit();
             lvgl_sys::lv_disp_drv_init(inner.as_mut_ptr());
             inner.assume_init()
-        };
+        });
 
         // Safety: The variable `draw_buffer` is statically allocated, no need to worry about this being dropped.
-        disp_drv.draw_buf = Box::<_lv_disp_draw_buf_t>::into_raw(
-            draw_buffer
-                .get_ptr()
-                .ok_or(DisplayError::FailedToRegister)?,
-        ) as *mut _;
+        disp_drv.draw_buf = draw_buffer.get_ptr() as *mut _;
 
         disp_drv.user_data = Box::<F>::into_raw(Box::new(display_update_callback)) as *mut _;
 
@@ -220,19 +224,20 @@ impl<'a, const N: usize> DisplayDriver<N> {
         disp_drv.flush_cb = Some(disp_flush_trampoline::<F, N>);
 
         // We do not store any memory that can be accidentally deallocated by on the Rust side.
-        Ok(Self {
+        Ok(ManuallyDrop::new(Self {
             disp_drv,
             _buffer: draw_buffer,
-        })
+        }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub unsafe fn new_raw(
-        draw_buffer: DrawBuffer<N>,
+        mut draw_buffer: DrawBuffer<N>,
         flush_cb: Option<
             unsafe extern "C" fn(
                 *mut lvgl_sys::_lv_disp_drv_t,
                 *const lvgl_sys::lv_area_t,
-                *mut lvgl_sys::lv_color16_t,
+                *mut lvgl_sys::lv_color_t,
             ),
         >,
         rounder_cb: Option<
@@ -255,18 +260,14 @@ impl<'a, const N: usize> DisplayDriver<N> {
         clean_dcache_cb: Option<unsafe extern "C" fn(*mut lvgl_sys::_lv_disp_drv_t)>,
         drv_update_cb: Option<unsafe extern "C" fn(*mut lvgl_sys::_lv_disp_drv_t)>,
         render_start_cb: Option<unsafe extern "C" fn(*mut lvgl_sys::_lv_disp_drv_t)>,
-    ) -> Result<Self> {
-        let mut disp_drv = unsafe {
+    ) -> Result<ManuallyDrop<Self>> {
+        let mut disp_drv = Box::pin(unsafe {
             let mut inner = MaybeUninit::uninit();
             lvgl_sys::lv_disp_drv_init(inner.as_mut_ptr());
             inner.assume_init()
-        };
+        });
 
-        disp_drv.draw_buf = Box::<_lv_disp_draw_buf_t>::into_raw(
-            draw_buffer
-                .get_ptr()
-                .ok_or(DisplayError::FailedToRegister)?,
-        ) as *mut _;
+        disp_drv.draw_buf = draw_buffer.get_ptr() as *mut _;
 
         //disp_drv.user_data = Box::into_raw(Box::new(display_update_callback)) as *mut _;
 
@@ -280,10 +281,10 @@ impl<'a, const N: usize> DisplayDriver<N> {
         disp_drv.drv_update_cb = drv_update_cb;
         disp_drv.render_start_cb = render_start_cb;
 
-        Ok(Self {
+        Ok(ManuallyDrop::new(Self {
             disp_drv,
             _buffer: draw_buffer,
-        })
+        }))
     }
 }
 
@@ -388,32 +389,27 @@ mod tests {
 
     #[test]
     fn get_scr_act_return_display() {
-        tests::initialize_test();
+        tests::initialize_test(true);
         let _screen = get_str_act(None).expect("We can get the active screen");
     }
 
     #[test]
     fn get_default_display() {
-        tests::initialize_test();
+        tests::initialize_test(true);
         let display = Display::default();
-
         let _screen_direct = display
             .get_scr_act()
             .expect("Return screen directly from the display instance");
-
-        let _screen_default =
-            DefaultDisplay::get_scr_act().expect("Return screen from the default display");
+        let _screen_default = get_scr_act().expect("Return screen from the default display");
     }
 
     #[test]
     fn register_display_directly() -> Result<()> {
-        tests::initialize_test();
+        crate::tests::initialize_test(true);
         let display = Display::default();
-
         let _screen = display
             .get_scr_act()
             .expect("Return screen directly from the display instance");
-
         Ok(())
     }
 }

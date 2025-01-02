@@ -66,7 +66,7 @@ impl Rusty for LvWidget {
         Ok(quote! {
             define_object!(#widget_name);
 
-            impl #widget_name {
+            impl<'a> #widget_name<'a> {
                 #(#methods)*
             }
         })
@@ -110,7 +110,7 @@ impl Rusty for LvFunc {
                 pub fn create(parent: &mut impl crate::NativeObject) -> crate::LvResult<Self> {
                     unsafe {
                         let ptr = lvgl_sys::#original_func_name(
-                            parent.raw()?.as_mut(),
+                            parent.raw().as_mut(),
                         );
                         if let Some(raw) = core::ptr::NonNull::new(ptr) {
                             let core = <crate::Obj as crate::Widget>::from_raw(raw).unwrap();
@@ -121,13 +121,9 @@ impl Rusty for LvFunc {
                     }
                 }
 
-                pub fn create_at(parent: &mut impl crate::NativeObject) -> crate::LvResult<Self> {
-                    Ok(Self::create(parent)?)
-                }
-
                 pub fn new() -> crate::LvResult<Self> {
-                    let mut parent = crate::display::DefaultDisplay::get_scr_act()?;
-                    Ok(Self::create_at(&mut parent)?)
+                    let mut parent = crate::display::get_scr_act()?;
+                    Self::create(&mut parent)
                 }
 
             });
@@ -200,7 +196,7 @@ impl Rusty for LvFunc {
             .fold(quote!(), |args, (i, arg)| {
                 // if first arg is `const`, then it should be immutable
                 let next_arg = if i == 0 {
-                    quote!(self.core.raw()?.as_mut())
+                    quote!(self.core.raw().as_mut())
                 } else {
                     let var = arg.get_value_usage();
                     quote!(#var)
@@ -561,7 +557,7 @@ mod test {
         let expected_code = quote! {
             pub fn set_bg_end_angle(&mut self, end: u16) -> crate::LvResult<()> {
                 unsafe {
-                    lvgl_sys::lv_arc_set_bg_end_angle(self.core.raw()?.as_mut(), end);
+                    lvgl_sys::lv_arc_set_bg_end_angle(self.core.raw().as_mut(), end);
                 }
                 Ok(())
             }
@@ -594,7 +590,7 @@ mod test {
             pub fn set_text(&mut self, text: &cstr_core::CStr) -> crate::LvResult<()> {
                 unsafe {
                     lvgl_sys::lv_label_set_text(
-                        self.core.raw()?.as_mut(),
+                        self.core.raw().as_mut(),
                         text.as_ptr()
                     );
                 }
@@ -617,7 +613,7 @@ mod test {
         let expected_code = quote! {
             define_object!(Arc);
 
-            impl Arc {
+            impl<'a> Arc<'a> {
 
             }
         };
@@ -649,11 +645,11 @@ mod test {
         let expected_code = quote! {
             define_object!(Arc);
 
-            impl Arc {
+            impl<'a> Arc<'a> {
                 pub fn create(parent: &mut impl crate::NativeObject) -> crate::LvResult<Self> {
                     unsafe {
                         let ptr = lvgl_sys::lv_arc_create(
-                            parent.raw()?.as_mut(),
+                            parent.raw().as_mut(),
                         );
                         if let Some(raw) = core::ptr::NonNull::new(ptr) {
                             let core = <crate::Obj as crate::Widget>::from_raw(raw).unwrap();
@@ -664,13 +660,9 @@ mod test {
                     }
                 }
 
-                pub fn create_at(parent: &mut impl crate::NativeObject) -> crate::LvResult<Self> {
-                    Ok(Self::create(parent)?)
-                }
-
                 pub fn new() -> crate::LvResult<Self> {
-                    let mut parent = crate::display::DefaultDisplay::get_scr_act()?;
-                    Ok(Self::create_at(&mut parent)?)
+                    let mut parent = crate::display::get_scr_act()?;
+                    Self::create(&mut parent)
                 }
             }
         };

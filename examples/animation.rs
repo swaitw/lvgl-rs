@@ -10,6 +10,7 @@ use lvgl::input_device::{
     pointer::{Pointer, PointerInputData},
     InputDriver,
 };
+use lvgl::misc::anim::{AnimRepeatCount, Animation};
 use lvgl::style::Style;
 use lvgl::widgets::{Btn, Label};
 use lvgl::{Align, Color, Display, DrawBuffer, LvError, Part, Widget};
@@ -54,6 +55,12 @@ fn main() -> Result<(), LvError> {
     btn_lbl.set_text(CString::new("Click me!").unwrap().as_c_str())?;
 
     let mut btn_state = false;
+
+    let mut anim = Animation::new(&mut button, Duration::from_secs(1), 0, 60, |obj, val| {
+        obj.set_align(Align::LeftMid, val, 0)
+    })?;
+    anim.set_repeat_count(AnimRepeatCount::Infinite);
+    anim.start();
     button.on_event(|_btn, event| {
         println!("Button received event: {:?}", event);
         if let lvgl::Event::Clicked = event {
