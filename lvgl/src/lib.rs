@@ -14,6 +14,9 @@
 
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(feature = "nightly", feature(cfg_accessible))]
+#![cfg_attr(feature = "nightly", feature(error_in_core))]
+
+pub use lvgl_sys as sys;
 
 #[macro_use]
 extern crate bitflags;
@@ -52,11 +55,9 @@ use crate::point::Point;
 #[cfg(feature = "embedded_graphics")]
 use embedded_graphics::geometry::Point;
 
-use core::sync::atomic::{AtomicBool, Ordering};
-
+pub use crate::lv_core::*;
 pub use display::*;
 pub use functions::*;
-pub use lv_core::*;
 pub use support::*;
 
 mod display;
@@ -67,41 +68,48 @@ mod support;
 pub mod drivers;
 pub mod font;
 pub mod input_device;
+pub mod misc;
 pub mod widgets;
 
 #[cfg(feature = "rust_timer")]
 pub mod timer;
 
-struct RunOnce(AtomicBool);
+#[cfg(feature = "unsafe_no_autoinit")]
+static mut IS_INIT: bool = false;
+#[cfg(not(feature = "unsafe_no_autoinit"))]
+static mut IS_INIT: bool = true;
 
-impl RunOnce {
-    const fn new() -> Self {
-        Self(AtomicBool::new(false))
-    }
-
-    fn swap_and_check(&self) -> bool {
-        self.0
-            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok()
+/// Initializes LVGL. Call at the start of the program, or after safely
+/// deinitializing with `deinit()`.
+pub fn init() {
+    unsafe {
+        if !IS_INIT {
+            lvgl_sys::lv_init();
+            IS_INIT = true;
+        }
     }
 }
 
-#[cfg(feature = "unsafe_no_autoinit")]
-static LVGL_INITIALIZED: RunOnce = RunOnce::new();
-
-/// Initializes LVGL. Call at the start of the program.
-#[cfg(feature = "unsafe_no_autoinit")]
-pub fn init() {
-    if LVGL_INITIALIZED.swap_and_check() {
-        unsafe {
-            lvgl_sys::lv_init();
+/// Uninitializes LVGL. Make sure to reinitialize LVGL with `init()` before
+/// accessing its functionality
+///
+/// # Safety
+///
+/// After calling, ensure existing LVGL-related values are not accessed even if
+/// LVGL is reinitialized.
+#[cfg(not(feature = "custom_allocator"))]
+pub unsafe fn deinit() {
+    unsafe {
+        if IS_INIT {
+            lvgl_sys::lv_deinit();
+            IS_INIT = false;
         }
     }
 }
 
 #[cfg(not(feature = "unsafe_no_autoinit"))]
 #[ctor::ctor]
-fn init() {
+fn once_init() {
     unsafe {
         lvgl_sys::lv_init();
     }
@@ -109,18 +117,14 @@ fn init() {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::*;
     use crate::display::{Display, DrawBuffer};
 
-    pub(crate) fn initialize_test() {
-        #[cfg(feature = "unsafe_no_autoinit")]
-        init();
-
-        static ONCE_INIT: RunOnce = RunOnce::new();
-        const REFRESH_BUFFER_SIZE: usize = 64 * 64 / 10;
-        let buffer = DrawBuffer::<REFRESH_BUFFER_SIZE>::default();
-
-        if ONCE_INIT.swap_and_check() {
+    pub(crate) fn initialize_test(buf: bool) {
+        unsafe { crate::deinit() };
+        crate::init();
+        if buf {
+            const REFRESH_BUFFER_SIZE: usize = 240 * 240 / 10;
+            let buffer = DrawBuffer::<REFRESH_BUFFER_SIZE>::default();
             let _ = Display::register(buffer, 240, 240, |_| {}).unwrap();
         }
     }

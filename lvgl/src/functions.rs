@@ -20,7 +20,10 @@ pub(crate) fn disp_drv_register<const N: usize>(
     disp_drv: &mut DisplayDriver<N>,
     drop: Option<unsafe extern "C" fn()>,
 ) -> Result<Display> {
-    let disp_ptr = unsafe { lvgl_sys::lv_disp_drv_register(&mut disp_drv.disp_drv as *mut _) };
+    let disp_ptr = unsafe {
+        let ptr = disp_drv.disp_drv.as_mut().get_mut() as *mut _;
+        lvgl_sys::lv_disp_drv_register(ptr)
+    };
     Ok(Display::from_raw(
         NonNull::new(disp_ptr).ok_or(CoreError::OperationFailed)?,
         drop,
@@ -42,18 +45,16 @@ pub(crate) fn get_str_act(disp: Option<&Display>) -> Result<Obj> {
                 .unwrap_or(ptr::null_mut() as *mut lvgl_sys::lv_disp_t),
         )
     };
-    match Obj::from_raw(
-        NonNull::new(scr_ptr).ok_or(CoreError::ResourceNotAvailable)?,
-    ) {
+    match unsafe { Obj::from_raw(NonNull::new(scr_ptr).ok_or(CoreError::ResourceNotAvailable)?) } {
         Some(o) => Ok(o),
-        None => Err(CoreError::OperationFailed)
+        None => Err(CoreError::OperationFailed),
     }
 }
 
 /// Runs an LVGL tick lasting a given `core::time::Duration`. This function
 /// should be called periodically.
 #[inline]
-#[cfg(not(feature = "rust_timer"))]
+#[cfg(not(any(feature = "rust_timer", feature = "custom_timer")))]
 pub fn tick_inc(tick_period: Duration) {
     unsafe {
         lvgl_sys::lv_tick_inc(tick_period.as_millis() as u32);
@@ -68,11 +69,13 @@ pub fn task_handler() {
 
 /// Directly send an event to a specific widget.
 #[inline]
-pub fn event_send<W: Widget>(obj: &mut W, event: Event<W::SpecialEvent>) -> LvResult<()> {
+pub fn event_send<W: for<'a> Widget<'a>>(
+    obj: &mut W,
+    event: Event<<W as Widget<'_>>::SpecialEvent>,
+) {
     unsafe {
-        lvgl_sys::lv_event_send(obj.raw()?.as_mut(), event.into(), ptr::null_mut());
+        lvgl_sys::lv_event_send(obj.raw().as_mut(), event.into(), ptr::null_mut());
     };
-    Ok(())
 }
 
 /// Register an input device driver to LVGL.

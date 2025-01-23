@@ -1,8 +1,8 @@
-use crate::support::Animation;
+use crate::support::AnimationState;
 use crate::widgets::Bar;
-use crate::{LvResult, NativeObject};
+use crate::NativeObject;
 
-impl Bar {
+impl Bar<'_> {
     /// Set minimum and the maximum values of the bar
     //pub fn set_range(&mut self, min: i16, max: i16) -> LvResult<()> {
     //    unsafe {
@@ -12,11 +12,10 @@ impl Bar {
     //}
 
     /// Set a new value on the bar
-    pub fn set_value(&mut self, value: i32, anim: Animation) -> LvResult<()> {
+    pub fn set_value(&mut self, value: i32, anim: AnimationState) {
         unsafe {
-            lvgl_sys::lv_bar_set_value(self.core.raw()?.as_mut(), value, anim.into());
+            lvgl_sys::lv_bar_set_value(self.core.raw().as_mut(), value, anim.into());
         }
-        Ok(())
     }
 }
 /*

@@ -1,8 +1,10 @@
 use crate::display::DisplayError;
 use crate::Widget;
 use core::convert::{TryFrom, TryInto};
+#[cfg(feature = "nightly")]
+use core::error::Error;
+use core::fmt;
 use core::ptr::NonNull;
-
 #[cfg(feature = "embedded_graphics")]
 use embedded_graphics::pixelcolor::{Rgb565, Rgb888};
 
@@ -16,6 +18,24 @@ pub enum LvError {
     LvOOMemory,
     AlreadyInUse,
 }
+
+impl fmt::Display for LvError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                LvError::InvalidReference => "Accessed invalid reference or ptr",
+                LvError::Uninitialized => "LVGL uninitialized",
+                LvError::LvOOMemory => "LVGL out of memory",
+                LvError::AlreadyInUse => "Resource already in use",
+            }
+        )
+    }
+}
+
+#[cfg(feature = "nightly")]
+impl Error for LvError {}
 
 impl From<DisplayError> for LvError {
     fn from(err: DisplayError) -> Self {
@@ -139,6 +159,36 @@ pub enum Event<T> {
     /// case, `Event<_>::PressLost` is sent.
     Released,
 
+    /// Called when an underlying value is changed e.g. position of a `Slider`.
+    ValueChanged,
+
+    ///
+    DrawMain,
+
+    ///
+    DrawMainBegin,
+
+    ///
+    DrawMainEnd,
+
+    ///
+    DrawPartBegin,
+
+    ///
+    DrawPartEnd,
+
+    ///
+    DrawPost,
+
+    ///
+    DrawPostBegin,
+
+    ///
+    DrawPostEnd,
+
+    /// Called on focus
+    Focused,
+
     /// Pointer-like input devices events (E.g. mouse or touchpad)
     Pointer(PointerEvent),
 
@@ -159,6 +209,15 @@ impl<S> TryFrom<lvgl_sys::lv_event_code_t> for Event<S> {
         const LV_EVENT_LONG_PRESSED_REPEAT: u32 =
             lvgl_sys::lv_event_code_t_LV_EVENT_LONG_PRESSED_REPEAT;
         const LV_EVENT_RELEASED: u32 = lvgl_sys::lv_event_code_t_LV_EVENT_RELEASED;
+        const LV_EVENT_VALUE_CHANGED: u32 = lvgl_sys::lv_event_code_t_LV_EVENT_VALUE_CHANGED;
+        const LV_EVENT_DRAW_MAIN: u32 = lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_MAIN;
+        const LV_EVENT_DRAW_MAIN_BEGIN: u32 = lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_MAIN_BEGIN;
+        const LV_EVENT_DRAW_MAIN_END: u32 = lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_MAIN_END;
+        const LV_EVENT_DRAW_PART_BEGIN: u32 = lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_PART_BEGIN;
+        const LV_EVENT_DRAW_PART_END: u32 = lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_PART_END;
+        const LV_EVENT_DRAW_POST: u32 = lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_POST;
+        const LV_EVENT_DRAW_POST_BEGIN: u32 = lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_POST_BEGIN;
+        const LV_EVENT_DRAW_POST_END: u32 = lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_POST_END;
 
         match value {
             LV_EVENT_PRESSED => Ok(Event::Pressed),
@@ -169,6 +228,15 @@ impl<S> TryFrom<lvgl_sys::lv_event_code_t> for Event<S> {
             LV_EVENT_LONG_PRESSED => Ok(Event::LongPressed),
             LV_EVENT_LONG_PRESSED_REPEAT => Ok(Event::LongPressedRepeat),
             LV_EVENT_RELEASED => Ok(Event::Released),
+            LV_EVENT_VALUE_CHANGED => Ok(Event::ValueChanged),
+            LV_EVENT_DRAW_MAIN => Ok(Event::DrawMain),
+            LV_EVENT_DRAW_MAIN_BEGIN => Ok(Event::DrawMainBegin),
+            LV_EVENT_DRAW_MAIN_END => Ok(Event::DrawMainEnd),
+            LV_EVENT_DRAW_PART_BEGIN => Ok(Event::DrawPartBegin),
+            LV_EVENT_DRAW_PART_END => Ok(Event::DrawPartEnd),
+            LV_EVENT_DRAW_POST => Ok(Event::DrawPost),
+            LV_EVENT_DRAW_POST_BEGIN => Ok(Event::DrawPostBegin),
+            LV_EVENT_DRAW_POST_END => Ok(Event::DrawPostEnd),
             _ => Err(()),
         }
     }
@@ -185,6 +253,15 @@ impl<S> From<Event<S>> for lvgl_sys::lv_event_code_t {
             Event::LongPressed => lvgl_sys::lv_event_code_t_LV_EVENT_LONG_PRESSED,
             Event::LongPressedRepeat => lvgl_sys::lv_event_code_t_LV_EVENT_LONG_PRESSED_REPEAT,
             Event::Released => lvgl_sys::lv_event_code_t_LV_EVENT_RELEASED,
+            Event::ValueChanged => lvgl_sys::lv_event_code_t_LV_EVENT_VALUE_CHANGED,
+            Event::DrawMain => lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_MAIN,
+            Event::DrawMainBegin => lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_MAIN_BEGIN,
+            Event::DrawMainEnd => lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_MAIN_END,
+            Event::DrawPartBegin => lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_PART_BEGIN,
+            Event::DrawPartEnd => lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_PART_END,
+            Event::DrawPost => lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_POST,
+            Event::DrawPostBegin => lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_POST_BEGIN,
+            Event::DrawPostEnd => lvgl_sys::lv_event_code_t_LV_EVENT_DRAW_POST_END,
             // TODO: handle all types...
             _ => lvgl_sys::lv_event_code_t_LV_EVENT_CLICKED,
         };
@@ -200,10 +277,10 @@ pub enum PointerEvent {
     DragThrowBegin,
 }
 
-pub(crate) unsafe extern "C" fn event_callback<T, F>(event: *mut lvgl_sys::lv_event_t)
+pub(crate) unsafe extern "C" fn event_callback<'a, T, F>(event: *mut lvgl_sys::lv_event_t)
 where
-    T: Widget + Sized,
-    F: FnMut(T, Event<T::SpecialEvent>),
+    T: Widget<'a> + Sized,
+    F: FnMut(T, Event<<T as Widget<'a>>::SpecialEvent>),
 {
     let code = (*event).code;
     let obj = (*event).target;
@@ -293,17 +370,32 @@ impl From<TextAlign> for u8 {
 }
 
 /// Boolean for determining whether animations are enabled.
-pub enum Animation {
+pub enum AnimationState {
     ON,
     OFF,
 }
 
-impl From<Animation> for lvgl_sys::lv_anim_enable_t {
-    fn from(anim: Animation) -> Self {
+impl From<AnimationState> for lvgl_sys::lv_anim_enable_t {
+    fn from(anim: AnimationState) -> Self {
         match anim {
-            Animation::ON => lvgl_sys::lv_anim_enable_t_LV_ANIM_ON,
-            Animation::OFF => lvgl_sys::lv_anim_enable_t_LV_ANIM_OFF,
+            AnimationState::ON => lvgl_sys::lv_anim_enable_t_LV_ANIM_ON,
+            AnimationState::OFF => lvgl_sys::lv_anim_enable_t_LV_ANIM_OFF,
         }
+    }
+}
+
+#[repr(u32)]
+pub enum LabelLongMode {
+    Clip = lvgl_sys::LV_LABEL_LONG_CLIP,
+    Dot = lvgl_sys::LV_LABEL_LONG_DOT,
+    Scroll = lvgl_sys::LV_LABEL_LONG_SCROLL,
+    ScrollCircular = lvgl_sys::LV_LABEL_LONG_SCROLL_CIRCULAR,
+    Wrap = lvgl_sys::LV_LABEL_LONG_WRAP,
+}
+
+impl From<LabelLongMode> for u8 {
+    fn from(value: LabelLongMode) -> Self {
+        unsafe { (value as u32).try_into().unwrap_unchecked() }
     }
 }
 

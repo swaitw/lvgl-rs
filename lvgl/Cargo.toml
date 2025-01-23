@@ -14,11 +14,11 @@ build = "build.rs"
 [dependencies]
 lvgl-sys = { version = "0.6.2", path = "../lvgl-sys" }
 cty = "0.2.2"
-embedded-graphics = { version = "0.7.1", optional = true }
+embedded-graphics = { version = "0.8.0", optional = true }
 cstr_core = { version = "0.2.6", default-features = false, features = ["alloc"] }
-bitflags = "2.0.2"
+bitflags = "2.3.2"
 paste = "1.0.12"
-ctor = "0.2.0"
+ctor = "0.2.2"
 
 [features]
 default = ["embedded_graphics", "drivers"]
@@ -52,9 +52,14 @@ use-vendored-config = ["lvgl-sys/use-vendored-config"]
 # on the timer module for usage notes.
 rust_timer = ["lvgl-sys/rust_timer"]
 
-# Enables some unstable features. Currently, only #[cfg_accessible] is used.
+# Enables using a custom tick function supplied in lv_conf.h
+custom_timer = ["lvgl-sys/custom_timer"]
+
+# Enables some unstable features. Currently, #![feature(cfg_accessible)] and
+# #![feature(error_in_core)] are used.
 # This feature will currently allow:
 # - Using built-in LVGL fonts other than the default
+# - Handling LvErrors/LvResults with error-handling libraries i.e. anyhow
 nightly = []
 
 # Disables auto-initializing LVGL.
@@ -71,6 +76,9 @@ nightly = []
 # function before constructing or using anything LVGL-related.
 unsafe_no_autoinit = []
 
+# This feature is required to use the custom allocator in lvgl (`LV_MEM_CUSTOM=1` in `lv_conf.h`).
+custom_allocator = []
+
 [build-dependencies]
 quote = "1.0.23"
 proc-macro2 = "1.0.51"
@@ -78,7 +86,7 @@ lvgl-codegen = { version = "0.6.2", path = "../lvgl-codegen" }
 lvgl-sys = { version = "0.6.2", path = "../lvgl-sys" }
 
 [dev-dependencies]
-embedded-graphics-simulator = "0.4.0"
+embedded-graphics-simulator = "0.5.0"
 
 [[example]]
 name = "app"
@@ -119,3 +127,8 @@ required-features = ["alloc", "drivers"]
 name = "rust_timer"
 path = "../examples/rust_timer.rs"
 required-features = ["alloc", "embedded_graphics", "rust_timer"]
+
+[[example]]
+name = "animation"
+path = "../examples/animation.rs"
+required-features = ["alloc", "embedded_graphics"]

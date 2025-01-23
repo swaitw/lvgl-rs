@@ -7,8 +7,7 @@ use embedded_graphics_simulator::{
 use lvgl;
 use lvgl::style::Style;
 use lvgl::widgets::{Bar, Label};
-use lvgl::{Align, Animation, Color, Display, DrawBuffer, Event, LvError, Part, Widget};
-use std::cell::RefCell;
+use lvgl::{Align, AnimationState, Color, Display, DrawBuffer, Event, LvError, Part, Widget};
 use std::thread::sleep;
 use std::time::Duration;
 use std::time::Instant;
@@ -37,20 +36,16 @@ fn main() -> Result<(), LvError> {
     const HOR_RES: u32 = 240;
     const VER_RES: u32 = 240;
 
-    let sim_display: SimulatorDisplay<Rgb565> = SimulatorDisplay::new(Size::new(HOR_RES, VER_RES));
+    let mut sim_display: SimulatorDisplay<Rgb565> =
+        SimulatorDisplay::new(Size::new(HOR_RES, VER_RES));
 
     let output_settings = OutputSettingsBuilder::new().scale(2).build();
     let mut window = Window::new("Bar Example", &output_settings);
 
-    let shared_native_display = RefCell::new(sim_display);
-
     let buffer = DrawBuffer::<{ (HOR_RES * VER_RES) as usize }>::default();
 
     let display = Display::register(buffer, HOR_RES, VER_RES, |refresh| {
-        shared_native_display
-            .borrow_mut()
-            .draw_iter(refresh.as_pixels())
-            .unwrap();
+        sim_display.draw_iter(refresh.as_pixels()).unwrap();
     })?;
 
     let mut screen = display.get_scr_act()?;
@@ -89,11 +84,11 @@ fn main() -> Result<(), LvError> {
             i = 0;
             lvgl::event_send(&mut bar, Event::Clicked)?;
         }
-        bar.set_value(i, Animation::ON)?;
+        bar.set_value(i, AnimationState::ON)?;
         i += 1;
 
         lvgl::task_handler();
-        window.update(&shared_native_display.borrow());
+        window.update(&mut sim_display);
 
         for event in window.events() {
             match event {

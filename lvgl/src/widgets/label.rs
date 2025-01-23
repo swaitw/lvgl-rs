@@ -1,5 +1,6 @@
-//use crate::widgets::Label;
-//use crate::{LvResult, NativeObject};
+use crate::widgets::Label;
+use crate::{LabelLongMode, NativeObject};
+
 #[cfg(feature = "alloc")]
 mod alloc_imp {
     use crate::widgets::Label;
@@ -7,12 +8,12 @@ mod alloc_imp {
     use cstr_core::CString;
     //use core::convert::TryFrom;
 
-    impl<S: AsRef<str>> From<S> for Label {
+    impl<S: AsRef<str>> From<S> for Label<'_> {
         fn from(text: S) -> Self {
             // text.try_into().unwrap()
             let text_cstr = CString::new(text.as_ref()).unwrap();
             let mut label = Label::new().unwrap();
-            label.set_text(text_cstr.as_c_str()).unwrap();
+            label.set_text(text_cstr.as_c_str());
             label
         }
     }
@@ -28,4 +29,16 @@ mod alloc_imp {
     //         Ok(label)
     //     }
     // }
+}
+
+impl Label<'_> {
+    pub fn set_long_mode(&mut self, long_mode: LabelLongMode) {
+        unsafe {
+            lvgl_sys::lv_label_set_long_mode(self.raw().as_mut(), long_mode.into());
+        }
+    }
+
+    pub fn get_long_mode(&self) -> u8 {
+        unsafe { lvgl_sys::lv_label_get_long_mode(self.raw().as_ref()) }
+    }
 }

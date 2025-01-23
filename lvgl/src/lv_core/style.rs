@@ -15,8 +15,10 @@
 //! All methods on the `Style` type directly lower to their C LVGL
 //! counterparts.
 
-use crate::{font::Font, Box, Color, TextAlign};
-use core::mem;
+use crate::{font::Font, Align, Box, Color, TextAlign};
+use core::fmt;
+use core::fmt::Debug;
+use core::mem::{self, MaybeUninit};
 use cty::c_uint;
 use paste::paste;
 
@@ -24,9 +26,20 @@ pub enum Themes {
     Pretty,
 }
 
+/// An LVGL `lv_style_t`. Allows for styling objects. Once created, a `Style`
+/// should be configured and then added to an object.
 #[derive(Clone)]
 pub struct Style {
     pub(crate) raw: Box<lvgl_sys::lv_style_t>,
+}
+
+impl Debug for Style {
+    // TODO: Decode and dump style values
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("Style")
+            .field("raw", &"!! LVGL lv_style_t ptr !!")
+            .finish()
+    }
 }
 
 impl Default for Style {
@@ -41,6 +54,8 @@ impl Default for Style {
 }
 
 bitflags! {
+    /// Represents possible opacities for use on `Style` objects.
+    #[derive(Debug, Clone, Copy)]
     pub struct Opacity: u32 {
         const OPA_TRANSP = lvgl_sys::LV_OPA_TRANSP;
         const OPA_0 = lvgl_sys::LV_OPA_0;
@@ -59,14 +74,179 @@ bitflags! {
 }
 
 impl From<Opacity> for u8 {
-    fn from(self_: Opacity) -> u8 {
-        self_.bits() as u8
+    fn from(value: Opacity) -> u8 {
+        value.bits() as u8
     }
 }
 
 bitflags! {
+    pub struct GridAlign: c_uint {
+        const START = lvgl_sys::lv_grid_align_t_LV_GRID_ALIGN_START;
+        const CENTER = lvgl_sys::lv_grid_align_t_LV_GRID_ALIGN_CENTER;
+        const END = lvgl_sys::lv_grid_align_t_LV_GRID_ALIGN_END;
+        const STRETCH = lvgl_sys::lv_grid_align_t_LV_GRID_ALIGN_STRETCH;
+        const SPACE_AROUND = lvgl_sys::lv_grid_align_t_LV_GRID_ALIGN_SPACE_AROUND;
+        const SPACE_BETWEEN = lvgl_sys::lv_grid_align_t_LV_GRID_ALIGN_SPACE_BETWEEN;
+        const SPACE_EVENLY = lvgl_sys::lv_grid_align_t_LV_GRID_ALIGN_SPACE_EVENLY;
+    }
+}
+
+impl From<GridAlign> for c_uint {
+    fn from(value: GridAlign) -> Self {
+        value.bits() as c_uint
+    }
+}
+
+impl From<GridAlign> for i16 {
+    fn from(value: GridAlign) -> Self {
+        value.bits() as i16
+    }
+}
+
+bitflags! {
+    pub struct FlexAlign: c_uint {
+        const START = lvgl_sys::lv_flex_align_t_LV_FLEX_ALIGN_START;
+        const CENTER = lvgl_sys::lv_flex_align_t_LV_FLEX_ALIGN_CENTER;
+        const END = lvgl_sys::lv_flex_align_t_LV_FLEX_ALIGN_END;
+        const SPACE_AROUND = lvgl_sys::lv_flex_align_t_LV_FLEX_ALIGN_SPACE_AROUND;
+        const SPACE_BETWEEN = lvgl_sys::lv_flex_align_t_LV_FLEX_ALIGN_SPACE_BETWEEN;
+        const SPACE_EVENLY = lvgl_sys::lv_flex_align_t_LV_FLEX_ALIGN_SPACE_EVENLY;
+    }
+}
+
+impl From<FlexAlign> for c_uint {
+    fn from(value: FlexAlign) -> Self {
+        value.bits() as c_uint
+    }
+}
+
+bitflags! {
+    pub struct FlexFlow: c_uint {
+        const COLUMN = lvgl_sys::lv_flex_flow_t_LV_FLEX_FLOW_COLUMN;
+        const COLUMN_REVERSE = lvgl_sys::lv_flex_flow_t_LV_FLEX_FLOW_COLUMN_REVERSE;
+        const COLUMN_WRAP = lvgl_sys::lv_flex_flow_t_LV_FLEX_FLOW_COLUMN_WRAP;
+        const COLUMN_WRAP_REVERSE = lvgl_sys::lv_flex_flow_t_LV_FLEX_FLOW_COLUMN_WRAP_REVERSE;
+        const ROW = lvgl_sys::lv_flex_flow_t_LV_FLEX_FLOW_ROW;
+        const ROW_REVERSE = lvgl_sys::lv_flex_flow_t_LV_FLEX_FLOW_ROW_REVERSE;
+        const ROW_WRAP = lvgl_sys::lv_flex_flow_t_LV_FLEX_FLOW_ROW_WRAP;
+        const ROW_WRAP_REVERSE = lvgl_sys::lv_flex_flow_t_LV_FLEX_FLOW_ROW_WRAP_REVERSE;
+    }
+}
+
+impl From<FlexFlow> for c_uint {
+    fn from(value: FlexFlow) -> Self {
+        value.bits() as c_uint
+    }
+}
+
+/// Represents a `Layout`, to be used with the `set_layout()` method on `Style`
+/// objects.
+pub struct Layout {
+    inner: u16,
+}
+
+impl Layout {
+    /// Generates an `LV_LAYOUT_FLEX`
+    pub fn flex() -> Self {
+        Self {
+            inner: unsafe { lvgl_sys::LV_LAYOUT_FLEX },
+        }
+    }
+
+    /// Generates an `LV_LAYOUT_GRID`
+    pub fn grid() -> Self {
+        Self {
+            inner: unsafe { lvgl_sys::LV_LAYOUT_GRID },
+        }
+    }
+}
+
+impl From<Layout> for u16 {
+    fn from(value: Layout) -> Self {
+        value.inner
+    }
+}
+
+/// A coordinate array, for use with `set_grid_*_dsc_array()` methods on
+/// `Style` objects.
+#[derive(Clone)]
+#[repr(C)]
+pub struct CoordDesc<const N: usize> {
+    inner: [i16; N],
+    tail: i16,
+}
+
+impl<const N: usize> CoordDesc<N> {
+    /// Generates a `CoordDesc` from values.
+    ///
+    /// # Safety
+    ///
+    /// `N` must be at least as long as LVGL expects. See the LVGL docs for
+    /// details.
+    pub unsafe fn from_values(values: [i16; N], is_grid: bool) -> Self {
+        Self {
+            inner: values,
+            tail: if is_grid {
+                lvgl_sys::LV_GRID_TEMPLATE_LAST.try_into().unwrap()
+            } else {
+                0b0
+            },
+        }
+    }
+
+    /// Returns the values contained.
+    pub fn values(&self) -> [i16; N] {
+        self.clone().inner
+    }
+}
+
+impl<const N: usize> From<&CoordDesc<N>> for *const i16 {
+    fn from(value: &CoordDesc<N>) -> Self {
+        value as *const _ as *const i16
+    }
+}
+
+#[derive(Clone)]
+pub enum StyleValues {
+    Num(i32),
+    Color(Color),
+    Opacity(Opacity),
+    //Align(Align),
+    None,
+}
+
+impl StyleValues {
+    pub fn is_some(&self) -> bool {
+        !matches!(self, StyleValues::None)
+    }
+}
+
+/*impl StyleValues {
+    pub fn num(&self) -> i32 {
+        self.num
+    }
+
+    pub fn color(&self) -> Color {
+        self.color
+    }
+}
+
+impl From<lvgl_sys::lv_style_value_t> for StyleValues {
+    fn from(value: lvgl_sys::lv_style_value_t) -> Self {
+        #[cfg(debug_assertions)]
+        assert!(!value.ptr.is_null());
+        Self {
+            num: value.num,
+            color: Color::from_raw(value.color),
+        }
+    }
+}*/
+
+bitflags! {
+    /// Various constants relevant for `Style` parameters
+    #[derive(PartialEq, Eq)]
     pub struct StyleProp: u32 {
-        const PROP_INV = lvgl_sys::lv_style_prop_t_LV_STYLE_PROP_INV;
+        //const PROP_INV = lvgl_sys::lv_style_prop_t_LV_STYLE_PROP_INV;
 
         /*Group 0*/
         const WIDTH = lvgl_sys::lv_style_prop_t_LV_STYLE_WIDTH;
@@ -176,7 +356,7 @@ bitflags! {
         const LAYOUT = lvgl_sys::lv_style_prop_t_LV_STYLE_LAYOUT;
         const BASE_DIR = lvgl_sys::lv_style_prop_t_LV_STYLE_BASE_DIR;
 
-        const PROP_ANY = lvgl_sys::lv_style_prop_t_LV_STYLE_PROP_ANY;
+        //const PROP_ANY = lvgl_sys::lv_style_prop_t_LV_STYLE_PROP_ANY;
     }
 }
 
@@ -196,8 +376,114 @@ macro_rules! gen_lv_style {
     };
 }
 
+macro_rules! gen_lv_style_generic {
+    ($func_name:ident,$vty:ty) => {
+        paste! {
+            #[inline]
+            pub fn $func_name<const N: usize>(&mut self, value: &$vty<N>) {
+                unsafe {
+                    lvgl_sys::[<lv_style_ $func_name>](
+                        self.raw.as_mut(),
+                        value.into(),
+                    );
+                }
+            }
+        }
+    };
+}
+
 impl Style {
-    gen_lv_style!(set_align, u8);
+    pub fn get_prop(&self, prop: StyleProp) -> StyleValues {
+        let mut raw_ret = MaybeUninit::<lvgl_sys::lv_style_value_t>::uninit();
+        let mut ret = match prop {
+            StyleProp::WIDTH
+            | StyleProp::MIN_WIDTH
+            | StyleProp::MAX_WIDTH
+            | StyleProp::HEIGHT
+            | StyleProp::MIN_HEIGHT
+            | StyleProp::MAX_HEIGHT
+            | StyleProp::X
+            | StyleProp::Y
+            | StyleProp::TRANSFORM_WIDTH
+            | StyleProp::TRANSFORM_HEIGHT
+            | StyleProp::TRANSFORM_ZOOM
+            | StyleProp::TRANSFORM_ANGLE
+            | StyleProp::TRANSLATE_X
+            | StyleProp::TRANSLATE_Y
+            | StyleProp::PAD_TOP
+            | StyleProp::PAD_LEFT
+            | StyleProp::PAD_BOTTOM
+            | StyleProp::PAD_RIGHT
+            | StyleProp::PAD_ROW
+            | StyleProp::PAD_COLUMN
+            | StyleProp::BORDER_WIDTH
+            | StyleProp::OUTLINE_WIDTH
+            | StyleProp::OUTLINE_PAD
+            | StyleProp::SHADOW_WIDTH
+            | StyleProp::SHADOW_SPREAD
+            | StyleProp::SHADOW_OFS_X
+            | StyleProp::SHADOW_OFS_Y
+            | StyleProp::LINE_WIDTH
+            | StyleProp::LINE_DASH_WIDTH
+            | StyleProp::LINE_DASH_GAP
+            | StyleProp::ARC_WIDTH
+            | StyleProp::RADIUS => StyleValues::Num(0),
+
+            StyleProp::BG_OPA
+            | StyleProp::BG_IMG_OPA
+            | StyleProp::BG_IMG_RECOLOR_OPA
+            | StyleProp::BORDER_OPA
+            | StyleProp::OUTLINE_OPA
+            | StyleProp::SHADOW_OPA
+            | StyleProp::IMG_OPA
+            | StyleProp::IMG_RECOLOR_OPA
+            | StyleProp::LINE_OPA
+            | StyleProp::ARC_OPA
+            | StyleProp::TEXT_OPA
+            | StyleProp::OPA => StyleValues::Opacity(Opacity::OPA_0),
+
+            StyleProp::BG_COLOR
+            | StyleProp::BG_GRAD_COLOR
+            | StyleProp::BORDER_COLOR
+            | StyleProp::OUTLINE_COLOR
+            | StyleProp::SHADOW_COLOR
+            | StyleProp::LINE_COLOR
+            | StyleProp::ARC_COLOR
+            | StyleProp::TEXT_COLOR => StyleValues::Color(Color::default()),
+
+            _ => StyleValues::None,
+        };
+
+        let ptr = raw_ret.as_mut_ptr() as *mut _;
+        let result = unsafe {
+            lvgl_sys::lv_style_get_prop(self.raw.clone().into_raw() as *const _, prop.bits(), ptr)
+        };
+        let raw_ret = unsafe { raw_ret.assume_init() };
+        if <u8 as Into<u32>>::into(result) == lvgl_sys::LV_RES_OK {
+            unsafe {
+                ret = match ret {
+                    StyleValues::Num(_) => StyleValues::Num(raw_ret.num),
+                    StyleValues::Opacity(_) => StyleValues::Opacity(Opacity::from_bits_retain(
+                        raw_ret.num.try_into().unwrap(),
+                    )),
+                    StyleValues::Color(_) => StyleValues::Color(Color::from_raw(raw_ret.color)),
+                    _ => StyleValues::None,
+                }
+            }
+            ret
+        } else {
+            StyleValues::None
+        }
+        /*unsafe {
+            let ret = lvgl_sys::lv_style_value_t {
+                num: 0,
+                ptr: core::ptr::null(),
+                color: Color::from_rgb((0, 0, 0)).raw,
+            };
+        }*/
+    }
+
+    gen_lv_style!(set_align, Align);
     //gen_lv_style!(set_anim, );
     //gen_lv_style!(set_anim_speed, );
     //gen_lv_style!(set_anim_time, );
@@ -229,26 +515,26 @@ impl Style {
     gen_lv_style!(set_clip_corner, bool);
     //gen_lv_style!(set_color_filter_dsc, );
     gen_lv_style!(set_color_filter_opa, Opacity);
-    gen_lv_style!(set_flex_cross_place, c_uint);
-    gen_lv_style!(set_flex_flow, c_uint);
+    gen_lv_style!(set_flex_flow, FlexFlow);
     gen_lv_style!(set_flex_grow, u8);
-    gen_lv_style!(set_flex_main_place, c_uint);
-    gen_lv_style!(set_flex_track_place, c_uint);
+    gen_lv_style!(set_flex_main_place, FlexAlign);
+    gen_lv_style!(set_flex_cross_place, FlexAlign);
+    gen_lv_style!(set_flex_track_place, FlexAlign);
     gen_lv_style!(set_grid_cell_column_pos, i16);
     gen_lv_style!(set_grid_cell_column_span, i16);
     gen_lv_style!(set_grid_cell_row_pos, i16);
     gen_lv_style!(set_grid_cell_row_span, i16);
-    gen_lv_style!(set_grid_cell_x_align, i16);
-    gen_lv_style!(set_grid_cell_y_align, i16);
-    gen_lv_style!(set_grid_column_align, c_uint);
-    //gen_lv_style!(set_grid_column_dsc_array, );
-    gen_lv_style!(set_grid_row_align, c_uint);
-    //gen_lv_style!(set_grid_row_dsc_array, );
+    gen_lv_style!(set_grid_cell_x_align, GridAlign);
+    gen_lv_style!(set_grid_cell_y_align, GridAlign);
+    gen_lv_style!(set_grid_column_align, GridAlign);
+    gen_lv_style_generic!(set_grid_column_dsc_array, CoordDesc);
+    gen_lv_style!(set_grid_row_align, GridAlign);
+    gen_lv_style_generic!(set_grid_row_dsc_array, CoordDesc);
     gen_lv_style!(set_height, i16);
     gen_lv_style!(set_img_opa, Opacity);
     gen_lv_style!(set_img_recolor, Color);
     gen_lv_style!(set_img_recolor_opa, Opacity);
-    gen_lv_style!(set_layout, u16);
+    gen_lv_style!(set_layout, Layout);
     gen_lv_style!(set_line_color, Color);
     gen_lv_style!(set_line_dash_gap, i16);
     gen_lv_style!(set_line_dash_width, i16);
